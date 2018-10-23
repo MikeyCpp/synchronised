@@ -8,28 +8,33 @@
 #include <memory>
 #include <tuple>
 
-class task
+struct deferred_task_expired : public std::logic_error
+{
+    deferred_task_expired(const std::string& e)
+        : logic_error(e) {}
+};
+
+class deferred_task
 {
 public:
-    virtual ~task() = default;
+    virtual ~deferred_task() = default;
     virtual void execute() = 0;
 };
 
 template<typename Base, typename T, typename ...Args>
-class task_impl : public task
+class  deferred_task_impl : public deferred_task
 {
 public:
     template<typename ...Igs>
-    task_impl(std::promise<T> aPromise,
-              T (Base::* aFunc)(Args...),
-              Base* aBase,
-              Igs&&... igs) :
-        promise_(std::move(aPromise)),
+    deferred_task_impl(
+            T (Base::* aFunc)(Args...),
+            std::weak_ptr<Base> aBase,
+            Igs&&... igs) :
         base_(aBase),
         func_(aFunc),
         args_(std::forward<Igs>(igs)...) {}
 
-    ~task_impl() override = default;
+    ~deferred_task_impl() override = default;
 
     void execute() override
     {
@@ -55,17 +60,25 @@ public:
         executed_ = true;
     }
 
+    std::future<T> get_future()
+    {
+        return promise_.get_future();
+    }
+
 private:
     template<int ...S>
     T execute_impl(integer_sequence<S...>)
     {
-        return (base_->*func_)(std::forward<Args>(std::get<S>(args_))...);
+        if(base_.expired())
+            throw deferred_task_expired("The deferred task has expired");
+
+        return (base_.lock().get()->*func_)(std::forward<Args>(std::get<S>(args_))...);
     }
 
     std::promise<T> promise_;
 
     using FunctionType = T (Base::*)(Args...);
-    Base* base_;
+    std::weak_ptr<Base> base_;
     FunctionType func_;
     std::tuple<Args...> args_;
 
@@ -73,8 +86,8 @@ private:
 };
 
 template<typename T, typename Base, typename ...Args, typename ...Igs>
-std::unique_ptr<task> make_task(std::promise<T> aPromise, T (Base::* aFunc)(Args...), Base* aBase, Igs&&... igs)
+std::unique_ptr<deferred_task_impl<Base, T, Args...>> make_deferred_task(T (Base::* aFunc)(Args...), std::shared_ptr<Base> aBase, Igs&&... igs)
 {
-    return std::unique_ptr<task>(
-                new task_impl<Base, T, Args...>(std::move(aPromise), aFunc, aBase, std::forward<Igs>(igs)...));
+    return std::unique_ptr<deferred_task_impl<Base,T,Args...>>(
+                new  deferred_task_impl<Base, T, Args...>(aFunc, aBase, std::forward<Igs>(igs)...));
 }

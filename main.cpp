@@ -22,7 +22,7 @@ public:
 int main()
 {
     std::unique_ptr<TestClass> myTestClass{new TestClass()};
-    auto taskQueue = std::make_shared<timed_queue_impl<task>>();
+    auto taskQueue = std::make_shared<timed_queue_impl<deferred_task>>();
 
     synchronised<TestClass> syncTestClass(std::move(myTestClass),
                                           taskQueue);
